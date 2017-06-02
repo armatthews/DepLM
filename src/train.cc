@@ -67,18 +67,12 @@ void ctrlc_handler(int signal) {
   }
 }
 
-SufficientStats RunDevSet(vector<OutputSentence>& dev_set, DependencyOutputModel* model) {
-  float loss = 0.0f;
-  unsigned words = 0;
+SufficientStats RunDevSet(vector<OutputSentence>& dev_set, Learner* learner) {
+  SufficientStats r;
   for (unsigned i = 0; i < dev_set.size(); ++i) {
-    ComputationGraph cg;
-    OutputSentence& sent = dev_set[i];
-    model->NewGraph(cg);
-    Expression loss_expr = model->BuildGraph(sent);
-    loss += as_scalar(loss_expr.value());
-    words += sent.size();
+    r += learner->LearnFromDatum(dev_set[i], false);
   }
-  return SufficientStats(loss, words, dev_set.size());
+  return r;
 }
 
 int main(int argc, char** argv) {
@@ -189,7 +183,7 @@ int main(int argc, char** argv) {
       trainer->update();
 
       if (++data_since_dev == dev_frequency) {
-        SufficientStats dev_stats = RunDevSet(dev_text, model);
+        SufficientStats dev_stats = RunDevSet(dev_text, &learner);
         bool new_best = (best_dev_stats.sentence_count == 0) || (dev_stats < best_dev_stats);
         cerr << fractional_epoch << "\t" << "dev loss = " << dev_stats << (new_best ? " (New best!)" : "") << endl;
         if (new_best) {

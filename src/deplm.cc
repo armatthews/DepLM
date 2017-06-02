@@ -88,7 +88,11 @@ Expression DependencyOutputModel::BuildGraph(const OutputSentence& sent) {
   return sum(losses);
 }
 
-void DependencyOutputModel::SetDropout(float rate) {}
+void DependencyOutputModel::SetDropout(float rate) {
+  stack_lstm.set_dropout(rate);
+  comp_lstm.set_dropout(rate);
+  final_mlp.SetDropout(rate);
+}
 
 Expression DependencyOutputModel::GetState(RNNPointer p) const {
   RNNPointer stack_pointer;

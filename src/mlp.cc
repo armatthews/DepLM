@@ -16,8 +16,15 @@ void MLP::NewGraph(ComputationGraph& cg) {
   wOb = parameter(cg, p_wOb);
 }
 
+void MLP::SetDropout(float rate) {
+  dropout_rate = rate;
+}
+
 Expression MLP::Feed(Expression input) const {
   Expression h = tanh(affine_transform({wHb, wIH, input}));
+  if (dropout_rate != 0.0f) {
+    h = dropout(h, dropout_rate);
+  }
   Expression o = affine_transform({wOb, wHO, h});
   return o;
 }

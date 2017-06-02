@@ -12,9 +12,12 @@ public:
   MLP();
   MLP(Model& model, unsigned input_size, unsigned hidden_size, unsigned output_size);
   void NewGraph(ComputationGraph& cg);
+  void SetDropout(float rate);
   Expression Feed(Expression input) const;
 
 private:
+  float dropout_rate;
+
   Parameter p_wIH;
   Parameter p_wHO;
   Parameter p_wHb;
