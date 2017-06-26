@@ -111,6 +111,14 @@ float logsumexp(const vector<float>& v) {
   return m + log(sum);
 }
 
+vector<Expression> MakeGRUInitialState(Expression c, unsigned gru_dim, unsigned gru_layer_count) {
+  vector<Expression> hinit(gru_layer_count);
+  for (unsigned i = 0; i < gru_layer_count; ++i) {
+    hinit[i] = pickrange(c, i * gru_dim, (i + 1) * gru_dim);
+  }
+  return hinit;
+}
+
 vector<Expression> MakeLSTMInitialState(Expression c, unsigned lstm_dim, unsigned lstm_layer_count) {
   vector<Expression> hinit(lstm_layer_count * 2);
   for (unsigned i = 0; i < lstm_layer_count; ++i) {

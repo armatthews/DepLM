@@ -41,6 +41,7 @@ string strip(const string& input);
 vector<string> strip(const vector<string>& input, bool removeEmpty = false);
 
 float logsumexp(const vector<float>& v);
+vector<Expression> MakeGRUInitialState(Expression c, unsigned gru_dim, unsigned gru_layer_count);
 vector<Expression> MakeLSTMInitialState(Expression c, unsigned lstm_dim, unsigned lstm_layer_count);
 string vec2str(Expression expr);
 bool same_value(Expression e1, Expression e2);

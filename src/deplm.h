@@ -2,6 +2,7 @@
 #include <boost/serialization/access.hpp>
 #include "dynet/dynet.h"
 #include "dynet/rnn.h"
+#include "dynet/gru.h"
 #include "embedder.h"
 #include "kbestlist.h"
 #include "utils.h"
@@ -56,12 +57,16 @@ public:
   Expression Loss(RNNPointer p, const shared_ptr<const Word> ref) override;
   bool IsDone(RNNPointer p) const override;
 
+  const Dict* vocab; // XXX: Remove me
+  vector<string> stack_strings; // XXX: Remove me
+  vector<string> comp_strings; // XXX: Remove me
+
 private:
   typedef tuple<RNNPointer, RNNPointer, unsigned, bool> State; // Stack pointer, comp pointer, stack depth, done with left
 
   Embedder* embedder;
-  LSTMBuilder stack_lstm;
-  LSTMBuilder comp_lstm;
+  GRUBuilder stack_lstm;
+  GRUBuilder comp_lstm;
   MLP final_mlp;
 
   Parameter emb_transform_p; // Simple linear transform from word embedding space to state space

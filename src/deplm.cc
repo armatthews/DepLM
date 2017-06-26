@@ -13,8 +13,8 @@ Expression OutputModel::GetState() const {
   return GetState(GetStatePointer());
 }
 
-Expression OutputModel::AddInput(const shared_ptr<const Word> prev_word) {
-  return AddInput(prev_word, GetStatePointer());
+Expression OutputModel::AddInput(const shared_ptr<const Word> word) {
+  return AddInput(word, GetStatePointer());
 }
 
 Expression OutputModel::PredictLogDistribution() {
@@ -33,16 +33,16 @@ Expression OutputModel::Loss(const shared_ptr<const Word> ref) {
   return Loss(GetStatePointer(), ref);
 }
 
-DependencyOutputModel::DependencyOutputModel() {}
+DependencyOutputModel::DependencyOutputModel() : vocab(nullptr) {}
 
-DependencyOutputModel::DependencyOutputModel(Model& model, Embedder* embedder, unsigned state_dim, unsigned final_hidden_dim, Dict& vocab) {
+DependencyOutputModel::DependencyOutputModel(Model& model, Embedder* embedder, unsigned state_dim, unsigned final_hidden_dim, Dict& vocab) : vocab(&vocab){
   assert (state_dim % 2 == 0);
   const unsigned vocab_size = vocab.size();
   half_state_dim = state_dim / 2;
 
   this->embedder = embedder;
-  stack_lstm = LSTMBuilder(lstm_layer_count, half_state_dim, half_state_dim, model);
-  comp_lstm = LSTMBuilder(lstm_layer_count, half_state_dim, half_state_dim, model);
+  stack_lstm = GRUBuilder(lstm_layer_count, half_state_dim, half_state_dim, model);
+  comp_lstm = GRUBuilder(lstm_layer_count, half_state_dim, half_state_dim, model);
   final_mlp = MLP(model, 2 * half_state_dim, final_hidden_dim, vocab_size);
 
   emb_transform_p = model.add_parameters({half_state_dim, embedder->Dim()});
@@ -60,13 +60,16 @@ void DependencyOutputModel::NewGraph(ComputationGraph& cg) {
   final_mlp.NewGraph(cg);
 
   emb_transform = parameter(cg, emb_transform_p);
-  stack_lstm_init = MakeLSTMInitialState(parameter(cg, stack_lstm_init_p), half_state_dim, lstm_layer_count);
-  comp_lstm_init = MakeLSTMInitialState(parameter(cg, comp_lstm_init_p), half_state_dim, lstm_layer_count);
+  stack_lstm_init = MakeGRUInitialState(parameter(cg, stack_lstm_init_p), half_state_dim, lstm_layer_count);
+  comp_lstm_init = MakeGRUInitialState(parameter(cg, comp_lstm_init_p), half_state_dim, lstm_layer_count);
 
   stack_lstm.start_new_sequence(stack_lstm_init);
   comp_lstm.start_new_sequence(comp_lstm_init);
 
   prev_states.clear();
+  /*cerr << "\tstate " << prev_states.size() << "\t" << "head: " << -1 << ", " << "stack: " << -1;
+  cerr << ", " << "sp: " << stack_lstm.state() << ", " << "cp: " << comp_lstm.state();
+  cerr << ", " << "sd: " << 0 << ", " << "ld: " << true << ", " << "word: " << "ROOT" << endl;*/
   prev_states.push_back(make_tuple(stack_lstm.state(), comp_lstm.state(), 0, true));
 
   head.clear();
@@ -74,12 +77,35 @@ void DependencyOutputModel::NewGraph(ComputationGraph& cg) {
 
   stack.clear();
   stack.push_back((RNNPointer)-1);
+
+  stack_strings.clear();
+  comp_strings.clear();
+
+  //cerr << "New graph called. Comp pointer is now " << comp_lstm.state() << endl;
 }
 
 Expression DependencyOutputModel::BuildGraph(const OutputSentence& sent) {
+  /*XXX*/
+  RNNPointer stack_pointer;
+  RNNPointer comp_pointer;
+  unsigned stack_depth;
+  bool left_done;
+  /*End XXX*/
+
   vector<Expression> losses;
   for (unsigned i = 0; i < sent.size(); ++i) {
     const shared_ptr<const Word> word = sent[i];
+    /*XXX*/
+    /*cerr << "Word " << i << " (" << vocab->convert(dynamic_pointer_cast<const StandardWord>(word)->id) << ") is predicted from state " << GetStatePointer() << endl;
+    RNNPointer p = GetStatePointer();
+    tie(stack_pointer, comp_pointer, stack_depth, left_done) = prev_states[p];
+    cerr << "  Stack: " << (stack_pointer != -1 ? stack_strings[stack_pointer] : "(empty)") << endl;
+    cerr << "  Left siblings: " << (comp_pointer != -1 ? comp_strings[comp_pointer] : "(none)") << endl;*/
+    /*cerr << "  stack pointer:" << stack_pointer << endl;
+    cerr << "  comp pointer:" << comp_pointer << endl;
+    cerr << "  stack depth:" << stack_depth << endl;
+    cerr << "  left done:" << ((left_done) ? "yes" : "no") << endl;*/
+    /*End XXX*/
     Expression loss = Loss(GetStatePointer(), word);
     losses.push_back(loss);
 
@@ -109,13 +135,13 @@ RNNPointer DependencyOutputModel::GetStatePointer() const {
   return (RNNPointer)((int)prev_states.size() - 1);
 }
 
-Expression DependencyOutputModel::AddInput(const shared_ptr<const Word> prev_word, const RNNPointer& p) {
+Expression DependencyOutputModel::AddInput(const shared_ptr<const Word> word, const RNNPointer& p) {
   assert (prev_states.size() == stack.size());
   assert (prev_states.size() == head.size());
   assert (p < prev_states.size());
 
-  unsigned wordid = dynamic_pointer_cast<const StandardWord>(prev_word)->id;
-  Expression embedding = embedder->Embed(prev_word);
+  unsigned wordid = dynamic_pointer_cast<const StandardWord>(word)->id;
+  Expression embedding = embedder->Embed(word);
   Expression transformed_embedding = emb_transform * embedding;
 
   RNNPointer stack_pointer;
@@ -130,13 +156,17 @@ Expression DependencyOutputModel::AddInput(const shared_ptr<const Word> prev_wor
   if (wordid == done_with_right) {
     assert (left_done);
     Expression node_repr = comp_lstm.add_input(comp_pointer, input_vec);
+    comp_strings.push_back(comp_strings[comp_pointer] + " " + vocab->convert(wordid));
+    //cerr << comp_lstm.state() << " created from " << comp_pointer << " plus " << vocab->convert(wordid) << endl;
 
     RNNPointer pop_to_i = stack[p];
     if (pop_to_i == -1) {
       stack_pointer = (RNNPointer)-1;
       comp_lstm.add_input((RNNPointer)-1, node_repr);
+      comp_strings.push_back("(" + comp_strings[comp_pointer] + " " + vocab->convert(wordid) + ")");
+      //cerr << comp_lstm.state() << " created from " << -1 << " plus " << "the preceeding treelet (FINAL)" << endl;
       comp_pointer = comp_lstm.state();
-      stack_depth --;
+      stack_depth--;
       left_done = true;
       parent = -1;
     }
@@ -147,7 +177,9 @@ Expression DependencyOutputModel::AddInput(const shared_ptr<const Word> prev_wor
       assert (stack_pointer == get<0>(pop_to));
 
       comp_lstm.add_input(get<1>(pop_to), node_repr);
+      comp_strings.push_back((get<1>(pop_to) != -1 ? comp_strings[get<1>(pop_to)] + " " : "") + "(" + comp_strings[comp_pointer] + " " + vocab->convert(wordid) + ")");
       comp_pointer = comp_lstm.state();
+      //cerr << comp_lstm.state() << " created from " << get<1>(pop_to) << " plus " << "the preceeding treelet" << endl;
 
       stack_depth--;
       assert (stack_depth == get<2>(pop_to));
@@ -160,24 +192,36 @@ Expression DependencyOutputModel::AddInput(const shared_ptr<const Word> prev_wor
   else if (wordid == done_with_left) {
     assert (!left_done);
     comp_lstm.add_input(comp_pointer, input_vec);
+    comp_strings.push_back((comp_pointer != -1 ? comp_strings[comp_pointer] + " " : "") + vocab->convert(wordid));
+    //cerr << comp_lstm.state() << " created from " << comp_pointer << " plus " << vocab->convert(wordid) << endl;
     comp_pointer = comp_lstm.state();
     parent = stack[p];
     left_done = true;
   }
   else {
     stack_lstm.add_input(stack_pointer, input_vec);
-    comp_lstm.add_input((RNNPointer)-1, input_vec);
+    stack_strings.push_back((stack_pointer != -1 ? stack_strings[stack_pointer] + " " : "") + vocab->convert(wordid));
+    if (true) {
+      comp_lstm.add_input((RNNPointer)-1, input_vec); // Should push a new empty thing onto the stack!
+      comp_strings.push_back(vocab->convert(wordid));
+      comp_pointer = comp_lstm.state();
+    }
+    else {
+      comp_pointer = (RNNPointer)-1;
+      //cerr << "Resetting comp pointer to -1 after seeing " << vocab->convert(wordid) << endl;
+    }
 
     stack_pointer = stack_lstm.state();
-    comp_pointer = comp_lstm.state();
     stack_depth++;
     left_done = false;
     parent = p;
   }
 
-  /*cerr << prev_states.size() << "\t" << "head: " << p << ", " << "stack: " << parent;
+  assert (vocab != nullptr);
+  /*string word_str = vocab->convert(wordid);
+  cerr << "\tstate " << prev_states.size() << "\t" << "head: " << p << ", " << "stack: " << parent;
   cerr << ", " << "sp: " << stack_pointer << ", " << "cp: " << comp_pointer;
-  cerr << ", " << "sd: " << stack_depth << ", " << "ld: " << left_done << ", " << "word: " << word << endl;*/
+  cerr << ", " << "sd: " << stack_depth << ", " << "ld: " << left_done << ", " << "word: " << word_str << endl;*/
   stack.push_back(parent);
   head.push_back(p);
   prev_states.push_back(make_tuple(stack_pointer, comp_pointer, stack_depth, left_done));

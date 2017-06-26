@@ -46,7 +46,7 @@ int main(int argc, char** argv) {
   const string model_filename = vm["model"].as<string>();
   const string text_filename = vm["text"].as<string>();
   Deserialize(model_filename, vocab, *model, dynet_model, trainer);
-
+  model->vocab = &vocab;
   vector<OutputSentence> input_text = ReadText(text_filename, vocab);
 
   for (unsigned i = 0; i < input_text.size(); ++i) {
